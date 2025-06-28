@@ -157,7 +157,7 @@ struct PremiumView: View {
                         
                         // Title & Subtitle
                         VStack(spacing: 12) {
-                            Text("KeepSafe Premium")
+                            Text("Fridge Premium")
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
                                 .foregroundStyle(
                                     LinearGradient(
@@ -181,10 +181,6 @@ struct PremiumView: View {
                         VStack(spacing: 8) {
                             if let weeklyProduct = storeManager.weeklyProduct {
                                 HStack(alignment: .top, spacing: 4) {
-                                    Text("$")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.8))
-                                        .offset(y: 4)
                                     
                                     Text(weeklyProduct.displayPrice)
                                         .font(.system(size: 48, weight: .bold))
@@ -195,6 +191,7 @@ struct PremiumView: View {
                                         .foregroundColor(.white.opacity(0.6))
                                         .offset(y: 20)
                                 }
+                                
                             } else {
                                 HStack(alignment: .top, spacing: 4) {
                                     Text("$")
@@ -213,7 +210,7 @@ struct PremiumView: View {
                                 }
                             }
                             
-                            Text("7-day free trial")
+                            Text("3-day free trial")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(Color(red: 1.0, green: 0.8, blue: 0.0))
                                 .padding(.horizontal, 16)
@@ -330,7 +327,7 @@ struct PremiumView: View {
         } message: {
             Text(alertMessage)
         }
-        .onChange(of: storeManager.errorMessage) { errorMessage in
+        .onChange(of: storeManager.errorMessage) { _, errorMessage in
             if let error = errorMessage {
                 alertTitle = "Error"
                 alertMessage = error
@@ -352,7 +349,7 @@ struct PremiumView: View {
         
         if storeManager.isPremiumActive {
             alertTitle = "Welcome to Premium!"
-            alertMessage = "Thank you for subscribing to KeepSafe Premium. Enjoy all the premium features!"
+                            alertMessage = "Thank you for subscribing to Fridge Premium. Enjoy all the premium features!"
             showingAlert = true
         }
     }

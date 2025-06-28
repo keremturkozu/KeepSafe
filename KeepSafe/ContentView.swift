@@ -115,6 +115,7 @@ struct ContentView: View {
 struct ProductListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Item.expirationDate) private var items: [Item]
+    @EnvironmentObject private var notificationManager: NotificationManager
     @State private var searchText = ""
     @State private var showingSettings = false
     @Binding var selectedTab: Int
@@ -139,7 +140,7 @@ struct ProductListView: View {
                     VStack(spacing: 20) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("KeepSafe")
+                                Text("Products")
                                     .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundStyle(
                                         LinearGradient(
@@ -204,16 +205,24 @@ struct ProductListView: View {
                     if filteredItems.isEmpty {
                         PremiumEmptyStateView(selectedTab: $selectedTab)
                     } else {
-                        ScrollView {
-                            LazyVStack(spacing: 20) {
-                                ForEach(filteredItems) { item in
-                                    PremiumProductRowView(item: item)
-                                }
+                        List {
+                            ForEach(filteredItems) { item in
+                                PremiumProductRowView(item: item)
+                                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                             }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 20)
-                            .padding(.bottom, 100)
+                            .onDelete(perform: deleteItems)
+                            
+                            // Bottom spacing
+                            Color.clear
+                                .frame(height: 100)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -222,12 +231,34 @@ struct ProductListView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        .onAppear {
+            // View göründüğünde tüm ürünler için bildirimleri zamanla
+            notificationManager.rescheduleAllNotifications(for: items)
+            
+            // Debug: Bildirim izni ve pending bildirimleri kontrol et
+            notificationManager.checkNotificationPermission()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                notificationManager.checkPendingNotifications()
+            }
+        }
+        .onChange(of: items) { _, newItems in
+            // Ürünler değiştiğinde bildirimleri güncelle
+            notificationManager.rescheduleAllNotifications(for: newItems)
+            
+            // Debug: Yeni bildirimler zamanlandıktan sonra kontrol et
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                notificationManager.checkPendingNotifications()
+            }
+        }
     }
     
     private func deleteItems(offsets: IndexSet) {
         withAnimation(.smooth) {
             for index in offsets {
-                modelContext.delete(filteredItems[index])
+                let item = filteredItems[index]
+                // Ürün silinmeden önce bildirimini iptal et
+                notificationManager.cancelNotifications(for: item)
+                modelContext.delete(item)
             }
         }
     }
@@ -239,96 +270,90 @@ struct PremiumProductRowView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Compact Image with Status Badge Below
-            VStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.gray.opacity(0.08))
+            // Left: Compact Image
+            Group {
+                if let imageData = item.imageData, let uiImage = UIImage(data: imageData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
                         .frame(width: 60, height: 60)
-                    
-                    Group {
-                        if let imageData = item.imageData, let uiImage = UIImage(data: imageData) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 60, height: 60)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                        } else {
-                            Image(systemName: "cube.box.fill")
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundColor(Color(red: 0.2, green: 0.4, blue: 0.8))
-                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(statusColor(for: item).opacity(0.12))
+                            .frame(width: 60, height: 60)
+                        
+                        Image(systemName: categoryIcon(for: item.category))
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(statusColor(for: item))
                     }
-                    
-                    // Status indicator
-                    VStack {
-                        HStack {
-                            Spacer()
-                            Circle()
-                                .fill(statusColor(for: item))
-                                .frame(width: 8, height: 8)
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.white, lineWidth: 1.5)
-                                )
-                        }
-                        Spacer()
-                    }
-                    .padding(4)
                 }
-                
-                // Status badge below image
-                Text(statusText(for: item))
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(statusColor(for: item))
-                    .clipShape(Capsule())
             }
             
-            // Content Section - Clean and Compact
-            VStack(alignment: .leading, spacing: 4) {
-                // Product name and days
-                HStack(alignment: .top) {
+            // Right: Content
+            VStack(alignment: .leading, spacing: 2) {
+                // Row 1: Product name + Day count
+                HStack(alignment: .firstTextBaseline) {
                     Text(item.name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     
-                    Spacer()
+                    Spacer(minLength: 8)
                     
-                    VStack(alignment: .trailing, spacing: 1) {
+                    HStack(spacing: 2) {
                         Text("\(abs(item.daysUntilExpiration))")
-                            .font(.system(size: 18, weight: .bold))
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundColor(statusColor(for: item))
                         
-                        Text(item.daysUntilExpiration >= 0 ? "days left" : "expired")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("days")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text(item.daysUntilExpiration >= 0 ? "left" : "ago")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 
-                // Category
+                // Row 2: Category
                 HStack(spacing: 4) {
                     Image(systemName: "tag.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(Color(red: 0.2, green: 0.4, blue: 0.8))
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.secondary)
                     
                     Text(item.category)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
                 }
+                .padding(.vertical, 1)
                 
-                // Expiration date
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
+                // Row 3: Date + Status
+                HStack {
+                    HStack(spacing: 3) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                        
+                        Text(item.expirationDate, formatter: dateFormatter)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
                     
-                    Text(item.expirationDate, formatter: dateFormatter)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                    Spacer()
+                    
+                    // Status Badge
+                    Text(statusText(for: item))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(statusColor(for: item))
+                        )
                 }
             }
         }
@@ -336,11 +361,15 @@ struct PremiumProductRowView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.gray.opacity(0.15), lineWidth: 0.8)
+                )
+                .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
         )
         .scaleEffect(isPressed ? 0.98 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
+        .animation(.easeInOut(duration: 0.2), value: isPressed)
         .onTapGesture {
             let impactFeedback = UIImpactFeedbackGenerator(style: .light)
             impactFeedback.impactOccurred()
@@ -348,6 +377,22 @@ struct PremiumProductRowView: View {
         .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, perform: {}, onPressingChanged: { isPressing in
             isPressed = isPressing
         })
+    }
+    
+    // Helper function for category icons
+    private func categoryIcon(for category: String) -> String {
+        switch category.lowercased() {
+        case "food & drinks", "food", "drinks":
+            return "fork.knife.circle.fill"
+        case "medicine", "health":
+            return "medical.thermometer.fill"
+        case "cosmetics", "beauty":
+            return "paintbrush.pointed.fill"
+        case "cleaning":
+            return "bubbles.and.suds.fill"
+        default:
+            return "cube.box.fill"
+        }
     }
     
     private func statusColor(for item: Item) -> Color {
@@ -498,8 +543,6 @@ struct PremiumEmptyStateView: View {
         }
     }
 }
-
-
 
 struct AddItemView: View {
     @State private var animateCards = false
@@ -790,16 +833,24 @@ struct ShoppingListView: View {
                     if filteredItems.isEmpty {
                         PremiumEmptyShoppingView(selectedTab: $selectedTab)
                     } else {
-                        ScrollView {
-                            LazyVStack(spacing: 10) {
-                                ForEach(filteredItems) { item in
-                                    PremiumShoppingRowView(item: item)
-                                }
+                        List {
+                            ForEach(filteredItems) { item in
+                                PremiumShoppingRowView(item: item)
+                                    .listRowInsets(EdgeInsets(top: 5, leading: 24, bottom: 5, trailing: 24))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                             }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 20)
-                            .padding(.bottom, 100)
+                            .onDelete(perform: deleteShoppingItems)
+                            
+                            // Bottom spacing
+                            Color.clear
+                                .frame(height: 100)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -810,7 +861,7 @@ struct ShoppingListView: View {
         }
     }
     
-    private func deleteItems(offsets: IndexSet) {
+    private func deleteShoppingItems(offsets: IndexSet) {
         withAnimation(.smooth) {
             for index in offsets {
                 modelContext.delete(filteredItems[index])
@@ -1101,8 +1152,6 @@ struct PremiumEmptyShoppingView: View {
     }
 }
 
-
-
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingPremium = false
@@ -1138,7 +1187,7 @@ struct SettingsView: View {
                                     )
                                 )
                             
-                            Text("Customize your KeepSafe experience")
+                            Text("Customize your Fridge experience")
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundColor(.gray)
                         }
@@ -1211,18 +1260,43 @@ struct SettingsView: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                             
-                            // Account Section
+                            // Settings Section
                             VStack(spacing: 12) {
-                                ModernSettingsRowView(icon: "person.circle.fill", title: "Profile", subtitle: "Manage your account", color: Color(red: 0.2, green: 0.4, blue: 0.8))
-                                ModernSettingsRowView(icon: "gearshape.fill", title: "General Settings", subtitle: "App preferences", color: Color(red: 0.5, green: 0.5, blue: 0.5))
-                                ModernSettingsRowView(icon: "bell.fill", title: "Notifications", subtitle: "Alert preferences", color: Color(red: 1.0, green: 0.6, blue: 0.2))
+                                // Notifications
+                                Button(action: {
+                                    print("Notifications button tapped")
+                                    // Ayarlar sayfasına yönlendir
+                                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                                        UIApplication.shared.open(settingsURL)
+                                    }
+                                }) {
+                                    ModernSettingsRowContent(icon: "bell.fill", title: "Notifications", subtitle: "Manage notification settings", color: Color(red: 1.0, green: 0.6, blue: 0.2))
+                                }
+                                .buttonStyle(PlainButtonStyle())
                             }
                             
                             // Support Section
                             VStack(spacing: 12) {
-                                ModernSettingsRowView(icon: "lock.shield.fill", title: "Privacy", subtitle: "Data & security", color: Color(red: 0.2, green: 0.7, blue: 0.5))
-                                ModernSettingsRowView(icon: "questionmark.circle.fill", title: "Help & Support", subtitle: "Get assistance", color: Color(red: 0.3, green: 0.5, blue: 0.9))
-                                ModernSettingsRowView(icon: "info.circle.fill", title: "About", subtitle: "App information", color: Color(red: 0.6, green: 0.4, blue: 0.8))
+                                // Privacy
+                                NavigationLink(destination: PrivacyView()) {
+                                    ModernSettingsRowContent(icon: "lock.shield.fill", title: "Privacy", subtitle: "Data & security", color: Color(red: 0.2, green: 0.7, blue: 0.5))
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                
+                                // Help & Support
+                                Button(action: {
+                                    print("Help & Support button tapped")
+                                    sendSupportEmail()
+                                }) {
+                                    ModernSettingsRowContent(icon: "questionmark.circle.fill", title: "Help & Support", subtitle: "Contact support", color: Color(red: 0.3, green: 0.5, blue: 0.9))
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                
+                                // About
+                                NavigationLink(destination: AboutView()) {
+                                    ModernSettingsRowContent(icon: "info.circle.fill", title: "About", subtitle: "App information", color: Color(red: 0.6, green: 0.4, blue: 0.8))
+                                }
+                                .buttonStyle(PlainButtonStyle())
                             }
                         }
                         .padding(.horizontal, 24)
@@ -1237,67 +1311,69 @@ struct SettingsView: View {
             PremiumView()
         }
     }
+    
+    private func sendSupportEmail() {
+        let email = "turkozukerem@gmail.com"
+        let subject = "Fridge Support Request"
+        let body = "Hello,\n\nI need help with Fridge app.\n\nDevice: \(UIDevice.current.model)\niOS Version: \(UIDevice.current.systemVersion)\nApp Version: 1.0\n\nDescription:\n"
+        
+        let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encodedBody = body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        
+        let mailURL = "mailto:\(email)?subject=\(encodedSubject)&body=\(encodedBody)"
+        
+        if let url = URL(string: mailURL) {
+            UIApplication.shared.open(url)
+        }
+    }
 }
 
-struct ModernSettingsRowView: View {
+struct ModernSettingsRowContent: View {
     let icon: String
     let title: String
     let subtitle: String
     let color: Color
-    @State private var isPressed = false
     
     var body: some View {
-        Button(action: {
-            // Handle tap action here
-        }) {
-            HStack(spacing: 16) {
-                // Icon Container
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(color.opacity(0.1))
-                        .frame(width: 44, height: 44)
-                    
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(color)
-                }
+        HStack(spacing: 16) {
+            // Icon Container
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(color.opacity(0.1))
+                    .frame(width: 44, height: 44)
                 
-                // Content
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.black)
-                        .multilineTextAlignment(.leading)
-                    
-                    Text(subtitle)
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.leading)
-                }
-                
-                Spacer()
-                
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.gray.opacity(0.6))
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(color)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
-            .scaleEffect(isPressed ? 0.98 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
+            
+            // Content
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.black)
+                    .multilineTextAlignment(.leading)
+                
+                Text(subtitle)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.leading)
+            }
+            
+            Spacer()
+            
+            // Chevron
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.gray.opacity(0.6))
         }
-        .buttonStyle(PlainButtonStyle())
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, perform: {}, onPressingChanged: { isPressing in
-            isPressed = isPressing
-        })
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
     }
 }
-
-
 
 struct CustomTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
@@ -1308,15 +1384,258 @@ struct CustomTextFieldStyle: TextFieldStyle {
     }
 }
 
-
-
-
-
 private let dateFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
     return formatter
 }()
+
+struct AboutView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        ZStack {
+                // Background
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(red: 0.95, green: 0.97, blue: 1.0),
+                        Color(red: 0.97, green: 0.98, blue: 1.0)
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 32) {
+                        // Header
+                        VStack(spacing: 16) {
+                            // App Icon
+                            Image(systemName: "cube.box.fill")
+                                .font(.system(size: 80, weight: .medium))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [
+                                            Color(red: 0.2, green: 0.4, blue: 0.8),
+                                            Color(red: 0.3, green: 0.5, blue: 0.9)
+                                        ]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            VStack(spacing: 8) {
+                                Text("Fridge")
+                                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                                    .foregroundColor(.black)
+                                
+                                Text("Version 1.0")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.top, 40)
+                        
+                        // Description
+                        VStack(spacing: 24) {
+                            VStack(spacing: 16) {
+                                Text("Your Smart Expiration Tracker")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(.black)
+                                    .multilineTextAlignment(.center)
+                                
+                                Text("Fridge helps you track product expiration dates and never waste food again. Get intelligent notifications before your products expire and maintain a smart shopping list.")
+                                    .font(.system(size: 16, weight: .regular))
+                                    .foregroundColor(.gray)
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(4)
+                            }
+                            
+                            // Features
+                            VStack(spacing: 16) {
+                                FeatureRowView(icon: "cube.box.fill", title: "Product Tracking", description: "Track expiration dates with photos")
+                                FeatureRowView(icon: "bell.fill", title: "Smart Notifications", description: "Get alerts before products expire")
+                                FeatureRowView(icon: "cart.fill", title: "Shopping Lists", description: "Organize your shopping needs")
+                                FeatureRowView(icon: "crown.fill", title: "Premium Features", description: "Unlimited products and advanced features")
+                            }
+                        }
+                        
+                        // Developer Info
+                        VStack(spacing: 16) {
+                            Divider()
+                                .padding(.horizontal, 40)
+                            
+                            VStack(spacing: 8) {
+                                Text("Developed by")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.gray)
+                                
+                                Text("Kerem Türközü")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.black)
+                                
+                                Text("© 2025 Fridge. All rights reserved.")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        
+                        Spacer(minLength: 100)
+                    }
+                    .padding(.horizontal, 24)
+                }
+            }
+            .navigationTitle("About")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct FeatureRowView: View {
+    let icon: String
+    let title: String
+    let description: String
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.2, green: 0.4, blue: 0.8).opacity(0.1))
+                    .frame(width: 44, height: 44)
+                
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(Color(red: 0.2, green: 0.4, blue: 0.8))
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.black)
+                
+                Text(description)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+}
+
+struct PrivacyView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        ZStack {
+                // Background
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(red: 0.95, green: 0.97, blue: 1.0),
+                        Color(red: 0.97, green: 0.98, blue: 1.0)
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        VStack(spacing: 16) {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 60, weight: .medium))
+                                .foregroundColor(Color(red: 0.2, green: 0.7, blue: 0.5))
+                            
+                            Text("Privacy Policy")
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundColor(.black)
+                        }
+                        .padding(.top, 40)
+                        
+                        VStack(alignment: .leading, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text("Effective Date: 06.28.2025")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.gray)
+                                
+                                Text("Developer Contact: turkozukerem@gmail.com")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            PrivacySectionView(
+                                title: "1. Introduction",
+                                content: "Thank you for using Fridge: Grocery List & Alarms. This privacy policy explains how your data is handled when you use the app."
+                            )
+                            
+                            PrivacySectionView(
+                                title: "2. No Personal Data Collection",
+                                content: "We do not collect, store, or share any personal information or data from users. All data (such as expiry dates or shopping list items) is stored locally on your device only."
+                            )
+                            
+                            PrivacySectionView(
+                                title: "3. Notifications",
+                                content: "The app requests permission to send you notifications. These are used to remind you:\n\n• 3 days before a product's expiry date\n• On the expiry date itself\n\nNotification permissions are optional and you can control them from your device settings at any time."
+                            )
+                            
+                            PrivacySectionView(
+                                title: "4. No Third-Party Access",
+                                content: "This app does not use any third-party services, analytics tools, or ad networks. Your data is not shared with anyone."
+                            )
+                            
+                            PrivacySectionView(
+                                title: "5. Children's Privacy",
+                                content: "This app does not target children under the age of 13 and does not collect any data from them."
+                            )
+                            
+                            PrivacySectionView(
+                                title: "6. Contact",
+                                content: "If you have any questions or concerns about this privacy policy, please contact us at:\nturkozukerem@gmail.com"
+                            )
+                            
+                            PrivacySectionView(
+                                title: "7. Changes to This Policy",
+                                content: "This policy may be updated if necessary. Any changes will be reflected on this page with a revised \"Effective Date\"."
+                            )
+                        }
+                        
+                        Spacer(minLength: 100)
+                    }
+                    .padding(.horizontal, 24)
+                }
+            }
+            .navigationTitle("Privacy")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct PrivacySectionView: View {
+    let title: String
+    let content: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.black)
+            
+            Text(content)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(.gray)
+                .lineSpacing(6)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+}
 
 #Preview {
     ContentView()

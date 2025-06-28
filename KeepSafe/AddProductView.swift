@@ -12,6 +12,10 @@ import PhotosUI
 struct AddProductView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var notificationManager: NotificationManager
+    @StateObject private var premiumManager = PremiumManager.shared
+    @Query private var items: [Item]
+    @State private var showingPremiumView = false
     
     @State private var productName = ""
     @State private var expirationDate = Date()
@@ -312,12 +316,23 @@ struct AddProductView: View {
         } message: {
             Text(alertMessage)
         }
+        .sheet(isPresented: $showingPremiumView) {
+            if #available(iOS 15.0, *) {
+                PremiumView()
+            }
+        }
     }
     
     private func addProduct() {
         guard !productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             alertMessage = "Please enter a product name"
             showingAlert = true
+            return
+        }
+        
+        // Check premium limits
+        if !premiumManager.isPremium && items.count >= premiumManager.maxProducts {
+            showingPremiumView = true
             return
         }
         
@@ -336,6 +351,18 @@ struct AddProductView: View {
             
             do {
                 try modelContext.save()
+                
+                // Yeni ürün için bildirim zamanla
+                notificationManager.scheduleExpirationNotification(for: newItem)
+                
+                // Debug: Bildirim zamanlandıktan sonra kontrol et
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    print("🎯 DEBUG: Checking notifications after adding \(newItem.name)")
+                    print("🗓️ Expiration date: \(newItem.expirationDate)")
+                    print("📅 Days until expiration: \(newItem.daysUntilExpiration)")
+                    notificationManager.checkPendingNotifications()
+                }
+                
                 isAddingProduct = false
                 dismiss()
             } catch {

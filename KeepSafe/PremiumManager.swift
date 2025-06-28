@@ -32,11 +32,11 @@ class PremiumManager: ObservableObject {
     
     // Premium feature limits
     var maxProducts: Int {
-        return isPremium ? Int.max : 10
+        return isPremium ? Int.max : 3
     }
     
     var maxShoppingItems: Int {
-        return isPremium ? Int.max : 20
+        return isPremium ? Int.max : 3
     }
     
     var hasCloudSync: Bool {

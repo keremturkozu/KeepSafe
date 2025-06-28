@@ -11,6 +11,9 @@ import SwiftData
 struct AddShoppingItemView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @StateObject private var premiumManager = PremiumManager.shared
+    @Query private var shoppingItems: [ShoppingItem]
+    @State private var showingPremiumView = false
     
     @State private var itemName = ""
     @State private var quantity = 1
@@ -312,12 +315,23 @@ struct AddShoppingItemView: View {
         } message: {
             Text(alertMessage)
         }
+        .sheet(isPresented: $showingPremiumView) {
+            if #available(iOS 15.0, *) {
+                PremiumView()
+            }
+        }
     }
     
     private func addShoppingItem() {
         guard !itemName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             alertMessage = "Please enter an item name"
             showingAlert = true
+            return
+        }
+        
+        // Check premium limits
+        if !premiumManager.isPremium && shoppingItems.count >= premiumManager.maxShoppingItems {
+            showingPremiumView = true
             return
         }
         
